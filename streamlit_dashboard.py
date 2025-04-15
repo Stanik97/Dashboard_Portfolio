@@ -1,7 +1,10 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
+import plotly.graph_objs as go
+from datetime import datetime, timedelta
 
+# Page settings
 st.set_page_config(page_title="Portfolio Dashboard", layout="wide")
 st.title("📊 Live Portfolio Dashboard")
 
@@ -16,7 +19,7 @@ portfolio = pd.DataFrame({
     "Target Horizon": ["1-2 years", "3-5 years", "3-5 years"]
 })
 
-# Fetch current prices and fundamental KPIs
+# Fetch current prices and KPIs
 @st.cache_data(ttl=3600)
 def fetch_data(ticker):
     try:
@@ -48,7 +51,7 @@ def fetch_data(ticker):
 kpis = portfolio["Ticker"].apply(fetch_data)
 portfolio = pd.concat([portfolio, kpis], axis=1)
 
-# Calculations
+# Financial calculations
 portfolio["Value"] = portfolio["Units"] * portfolio["Current Price"]
 portfolio["Cost Basis"] = portfolio["Units"] * portfolio["Buy Price"]
 portfolio["Profit/Loss (CHF)"] = portfolio["Value"] - portfolio["Cost Basis"]
@@ -74,52 +77,50 @@ def recommendation(row):
 
 portfolio["Recommendation"] = portfolio.apply(recommendation, axis=1)
 
-# Styling for recommendation column
+# Style recommendation column
 def highlight_recommendation(val):
     if "BUY" in str(val):
-        return "background-color: #d1f7c4"  # green
+        return "background-color: #d1f7c4"
     elif "SELL" in str(val):
-        return "background-color: #f8d7da"  # red
+        return "background-color: #f8d7da"
     elif "Review" in str(val) or "Risky" in str(val):
-        return "background-color: #fff3cd"  # yellow
+        return "background-color: #fff3cd"
     else:
         return ""
 
-# Rounding for display
+# Round numerical columns
 numeric_cols = ["Buy Price", "Current Price", "Value", "Cost Basis", "Profit/Loss (CHF)",
                 "Profit/Loss (%)", "EPS", "PE Ratio", "PEG Ratio", "Beta", "Free Cash Flow", "Revenue Growth YoY (%)"]
 portfolio[numeric_cols] = portfolio[numeric_cols].round(2)
 
-# Display styled dataframe
-styled_df = portfolio[[
-    "Type", "Name", "Ticker", "Units", "Buy Price", "Current Price", "Value",
-    "Profit/Loss (CHF)", "Profit/Loss (%)", "EPS", "PE Ratio", "PEG Ratio", "Beta",
-    "Free Cash Flow", "Revenue Growth YoY (%)", "Target Horizon", "Recommendation"
-]].style.applymap(highlight_recommendation, subset=["Recommendation"])
-
-st.dataframe(styled_df, use_container_width=True)
-
-# Portfolio summary
+# 💰 Add cash and updated summary
+cash = 162.07  # CHF at Saxo
 total_cost = portfolio["Cost Basis"].sum()
-total_value = portfolio["Value"].sum()
+total_value = portfolio["Value"].sum() + cash
 total_pl = total_value - total_cost
 total_pl_pct = (total_pl / total_cost) * 100
 
 st.markdown("### 💰 Portfolio Summary")
-st.metric(label="Total Invested", value=f"{total_cost:.2f} CHF")
-st.metric(label="Current Value", value=f"{total_value:.2f} CHF")
-st.metric(label="Total P/L", value=f"{total_pl:.2f} CHF ({total_pl_pct:.2f}%)")
+col1, col2, col3, col4 = st.columns(4)
+col1.metric(label="Total Invested", value=f"{total_cost:.2f} CHF")
+col2.metric(label="Current Value", value=f"{total_value:.2f} CHF")
+col3.metric(label="Cash (Saxo)", value=f"{cash:.2f} CHF")
+col4.metric(label="Total P/L", value=f"{total_pl:.2f} CHF ({total_pl_pct:.2f}%)")
 
-import plotly.graph_objs as go
-from datetime import datetime, timedelta
+# 📋 Table display
+styled_df = portfolio[[ 
+    "Type", "Name", "Ticker", "Units", "Buy Price", "Current Price", "Value",
+    "Profit/Loss (CHF)", "Profit/Loss (%)", "EPS", "PE Ratio", "PEG Ratio", "Beta",
+    "Free Cash Flow", "Revenue Growth YoY (%)", "Target Horizon", "Recommendation"
+]].style.applymap(highlight_recommendation, subset=["Recommendation"])
+st.dataframe(styled_df, use_container_width=True)
 
+# 📈 Historical chart
 st.markdown("---")
 st.markdown("### 📈 Kursentwicklung anzeigen")
 
-# Dropdown für Ticker-Auswahl
 selected_ticker = st.selectbox("Wähle eine Position aus dem Portfolio:", portfolio["Ticker"].unique())
 
-# Kursdaten abrufen
 @st.cache_data(ttl=3600)
 def get_history(ticker):
     stock = yf.Ticker(ticker)
@@ -127,7 +128,6 @@ def get_history(ticker):
 
 hist = get_history(selected_ticker)
 
-# Plot erstellen
 fig = go.Figure()
 fig.add_trace(go.Scatter(
     x=hist.index,
