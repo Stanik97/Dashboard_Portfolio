@@ -20,7 +20,7 @@ portfolio = pd.DataFrame({
 })
 
 # Fetch current prices and KPIs
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=300)
 def fetch_data(ticker):
     try:
         stock = yf.Ticker(ticker)
