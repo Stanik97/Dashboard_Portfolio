@@ -2,17 +2,17 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 
-st.set_page_config(page_title="Nico's Portfolio Dashboard", layout="wide")
-st.title("📊 Nico's Live Portfolio Dashboard")
+st.set_page_config(page_title="Portfolio Dashboard", layout="wide")
+st.title("📊 Live Portfolio Dashboard")
 
 # Define your portfolio
 portfolio = pd.DataFrame({
     "Type": ["Stock", "ETF", "ETF"],
     "Name": ["Palantir Technologies", "iShares Automation & Robotics", "iShares Core MSCI World"],
     "Ticker": ["PLTR", "RBOT.SW", "IWRD.SW"],
-    "Currency": ["USD", "USD", "USD"],
-    "Units": [2, 10, 3],
-    "Buy Price": [79.72, 12.26, 120.00],
+    "Currency": ["EUR", "USD", "USD"],
+    "Units": [2, 10, 1],
+    "Buy Price": [79.72, 12.26, 101.30],
     "Target Horizon": ["1-2 years", "3-5 years", "3-5 years"]
 })
 
