@@ -169,4 +169,3 @@ fig = go.Figure()
 fig.add_trace(go.Scatter(x=hist.index, y=hist["Close"], mode="lines", name="Kurs", line=dict(color="royalblue")))
 fig.update_layout(title=f"Kursentwicklung von {selected_ticker} (5 Jahre, täglich)", xaxis_title="Datum", yaxis_title="Kurs", height=500)
 st.plotly_chart(fig, use_container_width=True)
-
