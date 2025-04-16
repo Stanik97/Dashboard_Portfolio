@@ -11,7 +11,7 @@ st.title("📊 Live Portfolio Dashboard")
 portfolio = pd.DataFrame({
     "Type": ["Stock", "ETF", "ETF"],
     "Name": ["Palantir Technologies", "iShares Automation & Robotics", "iShares Core MSCI World"],
-    "Ticker": ["PLTR", "RBOT.SW", "IWRD.SW"],
+    "Ticker": ["PLTR.DE", "RBOT.SW", "IWRD.SW"],
     "Currency": ["EUR", "USD", "USD"],
     "Units": [2, 10, 1],
     "Buy Price": [79.72, 12.26, 101.30],
@@ -27,10 +27,9 @@ total_invested = total_deposit - cash
 def get_fx_rates():
     eur_chf = yf.Ticker("EURCHF=X").history(period="1d")["Close"].iloc[-1]
     usd_chf = yf.Ticker("USDCHF=X").history(period="1d")["Close"].iloc[-1]
-    usd_eur = yf.Ticker("USDEUR=X").history(period="1d")["Close"].iloc[-1]
-    return eur_chf, usd_chf, usd_eur
+    return eur_chf, usd_chf
 
-eur_chf, usd_chf, usd_eur = get_fx_rates()
+eur_chf, usd_chf = get_fx_rates()
 
 # --- Data Fetch ---
 @st.cache_data(ttl=300)
@@ -66,10 +65,10 @@ portfolio = pd.concat([portfolio, kpis], axis=1)
 
 # --- Preis in Zielwährung umrechnen ---
 def convert_price(row):
-    if row["Ticker"] == "PLTR" and row["Currency"] == "EUR":
-        return row["Raw Price"] * usd_eur
-    else:
+    if row["Currency"] == "USD":
         return row["Raw Price"]
+    else:
+        return row["Raw Price"]  # z. B. EUR, PLTR.DE → bereits in EUR
 
 portfolio["Current Price"] = portfolio.apply(convert_price, axis=1)
 
@@ -84,7 +83,7 @@ def convert_to_chf(row, price):
 portfolio["Value (CHF)"] = portfolio.apply(lambda row: convert_to_chf(row, row["Current Price"]) * row["Units"], axis=1)
 portfolio["Cost Basis"] = portfolio["Buy Price"] * portfolio["Units"]
 portfolio["Profit/Loss"] = (portfolio["Current Price"] - portfolio["Buy Price"]) * portfolio["Units"]
-portfolio["Profit/Loss (%)"] = ((portfolio["Current Price"] - portfolio["Buy Price"]) / portfolio["Buy Price"]) * 100
+portfolio["Profit/Loss (%)"] = ((portfolio["Current Price"] - portfolio["Buy Price"]) / row["Buy Price"]) * 100
 
 # --- Empfehlung ---
 def recommendation(row):
