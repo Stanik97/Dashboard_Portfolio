@@ -83,7 +83,7 @@ def convert_to_chf(row, price):
 portfolio["Value (CHF)"] = portfolio.apply(lambda row: convert_to_chf(row, row["Current Price"]) * row["Units"], axis=1)
 portfolio["Cost Basis"] = portfolio["Buy Price"] * portfolio["Units"]
 portfolio["Profit/Loss"] = (portfolio["Current Price"] - portfolio["Buy Price"]) * portfolio["Units"]
-portfolio["Profit/Loss (%)"] = ((portfolio["Current Price"] - portfolio["Buy Price"]) / row["Buy Price"]) * 100
+portfolio["Profit/Loss (%)"] = ((portfolio["Current Price"] - portfolio["Buy Price"]) / protfolio["Buy Price"]) * 100
 
 # --- Empfehlung ---
 def recommendation(row):
