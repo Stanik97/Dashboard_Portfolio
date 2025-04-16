@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 import plotly.graph_objects as go
+import requests
+from bs4 import BeautifulSoup
 
 # Page config
 st.set_page_config(page_title="Portfolio Dashboard", layout="wide")
@@ -22,7 +24,7 @@ cash = 162.07
 total_deposit = 500.00
 total_invested = total_deposit - cash
 
-# --- Currency Conversion ---
+# --- FX Rates ---
 @st.cache_data(ttl=300)
 def get_fx_rates():
     eur_chf = yf.Ticker("EURCHF=X").history(period="1d")["Close"].iloc[-1]
@@ -32,32 +34,35 @@ def get_fx_rates():
 
 eur_chf, usd_chf, usd_eur = get_fx_rates()
 
-# --- Data Fetch mit Fallback ---
+# --- Scraper für PLTR.DE ---
+def get_pltr_de_price():
+    try:
+        url = "https://www.boerse-frankfurt.de/equity/palantir-technologies-inc"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        response = requests.get(url, headers=headers)
+        soup = BeautifulSoup(response.content, "lxml")
+
+        # Suche nach dem aktuellen Preis im HTML
+        price_tag = soup.find("span", {"class": "price"})  # Klassennamen können sich ändern!
+        if price_tag:
+            price_text = price_tag.text.strip().replace(",", ".")
+            return float(price_text)
+    except:
+        pass
+    return None
+
+# --- KPI Fetch ---
 @st.cache_data(ttl=300)
 def fetch_kpis(ticker, currency):
     try:
-        stock = yf.Ticker(ticker)
-        hist = stock.history(period="1d")
-        if hist.empty and ticker == "PLTR.DE":
-            fallback = yf.Ticker("PLTR")
-            fallback_hist = fallback.history(period="1d")
-            if fallback_hist.empty:
-                return pd.Series({col: None for col in ["Raw Price", "EPS", "PE Ratio", "Market Cap", "PEG Ratio", "Beta", "Free Cash Flow", "Revenue Growth YoY (%)"]})
-            fallback_price = fallback_hist["Close"].iloc[-1] * usd_eur
-            return pd.Series({
-                "Raw Price": fallback_price,
-                "EPS": fallback.info.get("trailingEps"),
-                "PE Ratio": fallback.info.get("trailingPE"),
-                "Market Cap": fallback.info.get("marketCap"),
-                "PEG Ratio": fallback.info.get("pegRatio"),
-                "Beta": fallback.info.get("beta"),
-                "Free Cash Flow": fallback.info.get("freeCashflow"),
-                "Revenue Growth YoY (%)": fallback.info.get("revenueGrowth") * 100 if fallback.info.get("revenueGrowth") else None
-            })
-        elif hist.empty:
-            return pd.Series({col: None for col in ["Raw Price", "EPS", "PE Ratio", "Market Cap", "PEG Ratio", "Beta", "Free Cash Flow", "Revenue Growth YoY (%)"]})
-        
-        price = hist["Close"].iloc[-1]
+        if ticker == "PLTR.DE":
+            price = get_pltr_de_price()
+            stock = yf.Ticker("PLTR")  # Nur für KPIs, nicht Preis
+        else:
+            stock = yf.Ticker(ticker)
+            hist = stock.history(period="1d")
+            price = hist["Close"].iloc[-1] if not hist.empty else None
+
         return pd.Series({
             "Raw Price": price,
             "EPS": stock.info.get("trailingEps"),
@@ -71,14 +76,14 @@ def fetch_kpis(ticker, currency):
     except:
         return pd.Series({col: None for col in ["Raw Price", "EPS", "PE Ratio", "Market Cap", "PEG Ratio", "Beta", "Free Cash Flow", "Revenue Growth YoY (%)"]})
 
-# --- KPI Fetch für alle Positionen ---
+# Daten abrufen
 kpis = portfolio.apply(lambda row: fetch_kpis(row["Ticker"], row["Currency"]), axis=1)
 portfolio = pd.concat([portfolio, kpis], axis=1)
 
-# --- Preis in Zielwährung ---
+# Preis übernehmen
 portfolio["Current Price"] = portfolio["Raw Price"]
 
-# --- CHF-Umrechnung für Value (nur Darstellung) ---
+# Umrechnung nach CHF
 def convert_to_chf(row, price):
     if row["Currency"] == "USD":
         return price * usd_chf
@@ -91,7 +96,7 @@ portfolio["Cost Basis"] = portfolio["Buy Price"] * portfolio["Units"]
 portfolio["Profit/Loss"] = (portfolio["Current Price"] - portfolio["Buy Price"]) * portfolio["Units"]
 portfolio["Profit/Loss (%)"] = ((portfolio["Current Price"] - portfolio["Buy Price"]) / portfolio["Buy Price"]) * 100
 
-# --- Empfehlung ---
+# Empfehlung
 def recommendation(row):
     if row["Profit/Loss (%)"] <= -15:
         return "❌ SELL (Stop-Loss)"
@@ -108,12 +113,12 @@ def recommendation(row):
 
 portfolio["Recommendation"] = portfolio.apply(recommendation, axis=1)
 
-# --- Rundung ---
+# Rundung
 round_cols = ["Buy Price", "Current Price", "Value (CHF)", "Profit/Loss", "Profit/Loss (%)", "EPS", "PE Ratio",
               "PEG Ratio", "Beta", "Free Cash Flow", "Revenue Growth YoY (%)"]
 portfolio[round_cols] = portfolio[round_cols].round(3)
 
-# --- Portfolio Summary ---
+# Summary
 total_value_chf = portfolio["Value (CHF)"].sum() + cash
 growth_pct = ((total_value_chf - total_deposit) / total_deposit) * 100
 
@@ -127,22 +132,19 @@ with col2:
 with col4:
     st.metric("Value Development", f"{growth_pct:.2f} %")
 
-# --- Positionen aufteilen ---
+# Positionen anzeigen
 stocks_df = portfolio[portfolio["Type"] == "Stock"]
 etfs_df = portfolio[portfolio["Type"] == "ETF"]
 
-# Stocks
 st.markdown("### 📌 Current Positions – Stocks")
-stocks_display = stocks_df[[col for col in portfolio.columns if col != "Raw Price"]]
-st.dataframe(stocks_display, use_container_width=True)
+st.dataframe(stocks_df[[col for col in portfolio.columns if col != "Raw Price"]], use_container_width=True)
 
-# ETFs
 st.markdown("### 📌 Current Positions – ETFs")
 etf_cols = ["Type", "Name", "Ticker", "Currency", "Units", "Buy Price", "Current Price", "Value (CHF)",
             "Profit/Loss", "Profit/Loss (%)", "PE Ratio", "Target Horizon", "Recommendation"]
 st.dataframe(etfs_df[etf_cols], use_container_width=True)
 
-# --- Watchlist
+# Watchlist
 watchlist = pd.DataFrame({
     "Name": ["Nvidia Corp", "ASML Holding", "Tesla Inc"],
     "Ticker": ["NVDA", "ASML", "TSLA"],
@@ -155,7 +157,7 @@ st.dataframe(watchlist[watchlist["Type"] == "Stock"], use_container_width=True)
 st.markdown("### 👀 Watchlist – ETFs")
 st.dataframe(watchlist[watchlist["Type"] == "ETF"], use_container_width=True)
 
-# --- Kursentwicklung
+# Kursentwicklung
 st.markdown("---")
 st.markdown("### 📈 Kursentwicklung anzeigen")
 all_tickers = pd.concat([portfolio[["Name", "Ticker"]], watchlist[["Name", "Ticker"]]])
