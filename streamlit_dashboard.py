@@ -7,7 +7,7 @@ import plotly.graph_objects as go
 st.set_page_config(page_title="Portfolio Dashboard", layout="wide")
 st.title("📊 Live Portfolio Dashboard")
 
-# --- Input Data ---
+# Portfolio Definition
 portfolio = pd.DataFrame({
     "Type": ["Stock", "ETF", "ETF"],
     "Name": ["Palantir Technologies", "iShares Automation & Robotics", "iShares Core MSCI World"],
@@ -18,36 +18,29 @@ portfolio = pd.DataFrame({
     "Target Horizon": ["1-2 years", "3-5 years", "3-5 years"]
 })
 
+# Einzahlung & Cash
 cash = 162.07
 total_deposit = 500.00
 total_invested = total_deposit - cash
 
-# --- Currency Conversion ---
+# Wechselkurse abrufen
 @st.cache_data(ttl=300)
 def get_fx_rates():
     eur_chf = yf.Ticker("EURCHF=X").history(period="1d")["Close"].iloc[-1]
     usd_chf = yf.Ticker("USDCHF=X").history(period="1d")["Close"].iloc[-1]
-    usd_eur = yf.Ticker("USDEUR=X").history(period="1d")["Close"].iloc[-1]
-    return eur_chf, usd_chf, usd_eur
+    return eur_chf, usd_chf
 
-eur_chf, usd_chf, usd_eur = get_fx_rates()
+eur_chf, usd_chf = get_fx_rates()
 
-def convert_to_chf(row, price):
-    if row["Currency"] == "USD":
-        return price * usd_chf
-    elif row["Currency"] == "EUR":
-        return price * eur_chf
-    return price
-
-# --- Data Fetch ---
+# KPIs und Preis in Originalwährung abrufen
 @st.cache_data(ttl=300)
-def fetch_kpis(ticker):
+def fetch_data(ticker):
     try:
         stock = yf.Ticker(ticker)
         info = stock.info
-        price = stock.history(period="1d")["Close"].iloc[-1]
+        raw_price = stock.history(period="1d")["Close"].iloc[-1]
         return pd.Series({
-            "Raw Price": price,
+            "Raw Price": raw_price,
             "EPS": info.get("trailingEps"),
             "PE Ratio": info.get("trailingPE"),
             "Market Cap": info.get("marketCap"),
@@ -68,21 +61,29 @@ def fetch_kpis(ticker):
             "Revenue Growth YoY (%)": None
         })
 
-kpis = portfolio["Ticker"].apply(fetch_kpis)
+# Daten abrufen
+kpis = portfolio["Ticker"].apply(fetch_data)
 portfolio = pd.concat([portfolio, kpis], axis=1)
 
-# Währungslogik anwenden
-portfolio["Current Price"] = portfolio.apply(
-    lambda row: row["Raw Price"] / usd_eur if row["Currency"] == "EUR" and row["Ticker"] == "PLTR"
-    else row["Raw Price"], axis=1
-)
+# Preis in Originalwährung anzeigen
+portfolio["Current Price"] = portfolio["Raw Price"]
 
-portfolio["Value (CHF)"] = portfolio.apply(lambda row: convert_to_chf(row, row["Current Price"]) * row["Units"], axis=1)
+# CHF-Wert berechnen
+def convert_to_chf(row):
+    if row["Currency"] == "USD":
+        return row["Raw Price"] * usd_chf * row["Units"]
+    elif row["Currency"] == "EUR":
+        return row["Raw Price"] * eur_chf * row["Units"]
+    return row["Raw Price"] * row["Units"]
+
+portfolio["Value (CHF)"] = portfolio.apply(convert_to_chf, axis=1)
+
+# Weitere Berechnungen
 portfolio["Cost Basis"] = portfolio["Buy Price"] * portfolio["Units"]
 portfolio["Profit/Loss"] = (portfolio["Current Price"] - portfolio["Buy Price"]) * portfolio["Units"]
 portfolio["Profit/Loss (%)"] = ((portfolio["Current Price"] - portfolio["Buy Price"]) / portfolio["Buy Price"]) * 100
 
-# --- Empfehlungen ---
+# Empfehlung
 def recommendation(row):
     if row["Profit/Loss (%)"] <= -15:
         return "❌ SELL (Stop-Loss)"
@@ -93,18 +94,18 @@ def recommendation(row):
     elif row["Beta"] and row["Beta"] > 2:
         return "⚠️ Risky – High Volatility"
     elif row["EPS"] and row["EPS"] > 0 and row["Revenue Growth YoY (%)"] and row["Revenue Growth YoY (%)"] > 10:
-        return "\U0001f7e2 BUY (Growth)"
+        return "🟢 BUY (Growth)"
     else:
         return "HOLD"
 
 portfolio["Recommendation"] = portfolio.apply(recommendation, axis=1)
 
-# --- Rundung ---
+# Runden
 round_cols = ["Buy Price", "Current Price", "Value (CHF)", "Profit/Loss", "Profit/Loss (%)", "EPS", "PE Ratio",
               "PEG Ratio", "Beta", "Free Cash Flow", "Revenue Growth YoY (%)"]
 portfolio[round_cols] = portfolio[round_cols].round(3)
 
-# --- Portfolio Summary ---
+# Portfolio Summary
 total_value_chf = portfolio["Value (CHF)"].sum() + cash
 growth_pct = ((total_value_chf - total_deposit) / total_deposit) * 100
 
@@ -112,48 +113,45 @@ st.markdown("### 💰 Portfolio Summary")
 col1, col2, col3, col4 = st.columns([1.2, 1, 0.5, 1])
 with col1:
     st.metric("Total Deposit", f"{total_deposit:.3f} CHF")
-    st.markdown(f"<div style='margin-top: -15px; font-size: 0.9em;'>• Invested: {total_invested:.2f} CHF  <br>• Cash: {cash:.2f} CHF</div>", unsafe_allow_html=True)
+    st.markdown(f"<div style='margin-top: -15px; font-size: 0.9em;'>• Invested: {total_invested:.2f} CHF<br>• Cash: {cash:.2f} CHF</div>", unsafe_allow_html=True)
 with col2:
     st.metric("Total Value Portfolio", f"{total_value_chf:.3f} CHF")
 with col4:
     st.metric("Value Development", f"{growth_pct:.2f} %")
 
-# --- Current Positions: Split in Stocks & ETFs ---
+# Aufteilung in Stocks / ETFs
 stocks_df = portfolio[portfolio["Type"] == "Stock"]
 etfs_df = portfolio[portfolio["Type"] == "ETF"]
 
-# STOCKS
+# Stocks anzeigen
 st.markdown("### 📌 Current Positions – Stocks")
-stocks_display = stocks_df[[
-    "Type", "Name", "Ticker", "Currency", "Units", "Buy Price", "Current Price", "Value (CHF)", "Profit/Loss", "Profit/Loss (%)",
-    "EPS", "PE Ratio", "PEG Ratio", "Beta", "Free Cash Flow", "Revenue Growth YoY (%)", "Target Horizon", "Recommendation"
-]]
+stocks_display = stocks_df[[ "Type", "Name", "Ticker", "Currency", "Units", "Buy Price", "Current Price", "Value (CHF)",
+                             "Profit/Loss", "Profit/Loss (%)", "EPS", "PE Ratio", "PEG Ratio", "Beta",
+                             "Free Cash Flow", "Revenue Growth YoY (%)", "Target Horizon", "Recommendation" ]]
 st.dataframe(stocks_display, use_container_width=True)
 
-# ETFS
+# ETFs anzeigen
 st.markdown("### 📌 Current Positions – ETFs")
-etfs_display = etfs_df[[
-    "Type", "Name", "Ticker", "Currency", "Units", "Buy Price", "Current Price", "Value (CHF)", "Profit/Loss", "Profit/Loss (%)",
-    "PE Ratio", "Target Horizon", "Recommendation"
-]]
+etfs_display = etfs_df[[ "Type", "Name", "Ticker", "Currency", "Units", "Buy Price", "Current Price", "Value (CHF)",
+                         "Profit/Loss", "Profit/Loss (%)", "PE Ratio", "Target Horizon", "Recommendation" ]]
 st.dataframe(etfs_display, use_container_width=True)
 
-# --- Watchlist: Stocks & ETFs getrennt ---
+# Watchlist
 watchlist = pd.DataFrame({
-    "Name": ["Nvidia Corp", "ASML Holding", "Tesla Inc"],
-    "Ticker": ["NVDA", "ASML", "TSLA"],
-    "Currency": ["USD", "EUR", "USD"],
-    "Comment": ["High growth", "Strong EU Tech", "Volatile but strategic"],
-    "Type": ["Stock", "Stock", "Stock"]
+    "Name": ["Nvidia Corp", "ASML Holding", "Tesla Inc", "Amundi MSCI Emerging Markets"],
+    "Ticker": ["NVDA", "ASML", "TSLA", "EMXC.SW"],
+    "Currency": ["USD", "EUR", "USD", "CHF"],
+    "Comment": ["High growth", "Strong EU Tech", "Volatile but strategic", "Ex China Emerging ETF"],
+    "Type": ["Stock", "Stock", "Stock", "ETF"]
 })
 
+# Watchlist anzeigen
 st.markdown("### 👀 Watchlist – Stocks")
 st.dataframe(watchlist[watchlist["Type"] == "Stock"], use_container_width=True)
-
 st.markdown("### 👀 Watchlist – ETFs")
 st.dataframe(watchlist[watchlist["Type"] == "ETF"], use_container_width=True)
 
-# --- Kursentwicklung (auch Watchlist möglich) ---
+# Kursentwicklung
 st.markdown("---")
 st.markdown("### 📈 Kursentwicklung anzeigen")
 all_tickers = pd.concat([portfolio[["Name", "Ticker"]], watchlist[["Name", "Ticker"]]])
@@ -162,8 +160,7 @@ selected_ticker = all_tickers[all_tickers["Name"] == selected_name]["Ticker"].va
 
 @st.cache_data(ttl=3600)
 def get_history(ticker):
-    stock = yf.Ticker(ticker)
-    return stock.history(period="5y", interval="1d")
+    return yf.Ticker(ticker).history(period="5y", interval="1d")
 
 hist = get_history(selected_ticker)
 fig = go.Figure()
