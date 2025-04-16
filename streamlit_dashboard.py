@@ -2,18 +2,17 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 import plotly.graph_objects as go
-import requests
-from bs4 import BeautifulSoup
+from tradingview_ta import TA_Handler, Interval, Exchange
 
 # Page config
 st.set_page_config(page_title="Portfolio Dashboard", layout="wide")
-st.title("📊 Live Portfolio Dashboard")
+st.title("📊 Live Portfolio Dashboard (mit TradingView Kurs)")
 
 # --- Input Data ---
 portfolio = pd.DataFrame({
     "Type": ["Stock", "ETF", "ETF"],
     "Name": ["Palantir Technologies", "iShares Automation & Robotics", "iShares Core MSCI World"],
-    "Ticker": ["PLTR.DE", "RBOT.SW", "IWRD.SW"],
+    "Ticker": ["PLTR", "RBOT.SW", "IWRD.SW"],
     "Currency": ["EUR", "USD", "USD"],
     "Units": [2, 10, 1],
     "Buy Price": [79.72, 12.26, 101.30],
@@ -24,7 +23,7 @@ cash = 162.07
 total_deposit = 500.00
 total_invested = total_deposit - cash
 
-# --- FX Rates ---
+# --- Currency Conversion ---
 @st.cache_data(ttl=300)
 def get_fx_rates():
     eur_chf = yf.Ticker("EURCHF=X").history(period="1d")["Close"].iloc[-1]
@@ -34,64 +33,78 @@ def get_fx_rates():
 
 eur_chf, usd_chf, usd_eur = get_fx_rates()
 
-# --- Scraper für PLTR.DE ---
-def get_pltr_de_price():
+# --- TradingView Price Fetch ---
+def get_tradingview_price(symbol):
     try:
-        url = "https://www.boerse-frankfurt.de/equity/palantir-technologies-inc"
-        headers = {"User-Agent": "Mozilla/5.0"}
-        response = requests.get(url, headers=headers)
-        soup = BeautifulSoup(response.content, "lxml")
-
-        # Suche nach dem aktuellen Preis im HTML
-        price_tag = soup.find("span", {"class": "price"})  # Klassennamen können sich ändern!
-        if price_tag:
-            price_text = price_tag.text.strip().replace(",", ".")
-            return float(price_text)
+        handler = TA_Handler(
+            symbol=symbol,
+            exchange="NASDAQ",
+            screener="america",
+            interval=Interval.INTERVAL_1_DAY
+        )
+        analysis = handler.get_analysis()
+        return analysis.indicators["close"]
     except:
-        pass
-    return None
+        return None
 
 # --- KPI Fetch ---
 @st.cache_data(ttl=300)
 def fetch_kpis(ticker, currency):
     try:
-        if ticker == "PLTR.DE":
-            price = get_pltr_de_price()
-            stock = yf.Ticker("PLTR")  # Nur für KPIs, nicht Preis
+        if ticker == "PLTR":
+            price_usd = get_tradingview_price("PLTR")
+            if currency == "EUR":
+                price = price_usd * usd_eur
+            else:
+                price = price_usd
         else:
             stock = yf.Ticker(ticker)
-            hist = stock.history(period="1d")
-            price = hist["Close"].iloc[-1] if not hist.empty else None
+            price = stock.history(period="1d")["Close"].iloc[-1]
+            info = stock.info
+            return pd.Series({
+                "Raw Price": price,
+                "EPS": info.get("trailingEps"),
+                "PE Ratio": info.get("trailingPE"),
+                "Market Cap": info.get("marketCap"),
+                "PEG Ratio": info.get("pegRatio"),
+                "Beta": info.get("beta"),
+                "Free Cash Flow": info.get("freeCashflow"),
+                "Revenue Growth YoY (%)": info.get("revenueGrowth") * 100 if info.get("revenueGrowth") else None
+            })
 
+        stock = yf.Ticker("PLTR")  # nur für KPIs
+        info = stock.info
         return pd.Series({
             "Raw Price": price,
-            "EPS": stock.info.get("trailingEps"),
-            "PE Ratio": stock.info.get("trailingPE"),
-            "Market Cap": stock.info.get("marketCap"),
-            "PEG Ratio": stock.info.get("pegRatio"),
-            "Beta": stock.info.get("beta"),
-            "Free Cash Flow": stock.info.get("freeCashflow"),
-            "Revenue Growth YoY (%)": stock.info.get("revenueGrowth") * 100 if stock.info.get("revenueGrowth") else None
+            "EPS": info.get("trailingEps"),
+            "PE Ratio": info.get("trailingPE"),
+            "Market Cap": info.get("marketCap"),
+            "PEG Ratio": info.get("pegRatio"),
+            "Beta": info.get("beta"),
+            "Free Cash Flow": info.get("freeCashflow"),
+            "Revenue Growth YoY (%)": info.get("revenueGrowth") * 100 if info.get("revenueGrowth") else None
         })
-    except:
-        return pd.Series({col: None for col in ["Raw Price", "EPS", "PE Ratio", "Market Cap", "PEG Ratio", "Beta", "Free Cash Flow", "Revenue Growth YoY (%)"]})
 
-# Daten abrufen
+    except:
+        return pd.Series({col: None for col in [
+            "Raw Price", "EPS", "PE Ratio", "Market Cap", "PEG Ratio", "Beta", "Free Cash Flow", "Revenue Growth YoY (%)"
+        ]})
+
+# --- Daten abrufen ---
 kpis = portfolio.apply(lambda row: fetch_kpis(row["Ticker"], row["Currency"]), axis=1)
 portfolio = pd.concat([portfolio, kpis], axis=1)
 
-# Preis übernehmen
+# --- Preis-Umrechnung und Kennzahlen ---
 portfolio["Current Price"] = portfolio["Raw Price"]
 
-# Umrechnung nach CHF
-def convert_to_chf(row, price):
+def convert_to_chf(row):
     if row["Currency"] == "USD":
-        return price * usd_chf
+        return row["Current Price"] * usd_chf
     elif row["Currency"] == "EUR":
-        return price * eur_chf
-    return price
+        return row["Current Price"] * eur_chf
+    return row["Current Price"]
 
-portfolio["Value (CHF)"] = portfolio.apply(lambda row: convert_to_chf(row, row["Current Price"]) * row["Units"], axis=1)
+portfolio["Value (CHF)"] = portfolio.apply(lambda row: convert_to_chf(row) * row["Units"], axis=1)
 portfolio["Cost Basis"] = portfolio["Buy Price"] * portfolio["Units"]
 portfolio["Profit/Loss"] = (portfolio["Current Price"] - portfolio["Buy Price"]) * portfolio["Units"]
 portfolio["Profit/Loss (%)"] = ((portfolio["Current Price"] - portfolio["Buy Price"]) / portfolio["Buy Price"]) * 100
@@ -132,7 +145,7 @@ with col2:
 with col4:
     st.metric("Value Development", f"{growth_pct:.2f} %")
 
-# Positionen anzeigen
+# Tabellen
 stocks_df = portfolio[portfolio["Type"] == "Stock"]
 etfs_df = portfolio[portfolio["Type"] == "ETF"]
 
