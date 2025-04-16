@@ -8,6 +8,11 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="Portfolio Dashboard", layout="wide")
 st.title("📊 Live Portfolio Dashboard")
 
+# Total deposit (manuell definierbar)
+total_deposit = 500.00  # CHF, manuell eingezahlt
+cash = 162.07  # CHF noch auf Saxo Konto
+invested = total_deposit - cash
+
 # Define your portfolio
 portfolio = pd.DataFrame({
     "Type": ["Stock", "ETF", "ETF"],
@@ -18,6 +23,17 @@ portfolio = pd.DataFrame({
     "Buy Price": [79.72, 12.26, 101.30],
     "Target Horizon": ["1-2 years", "3-5 years", "3-5 years"]
 })
+
+# Get current exchange rate
+@st.cache_data(ttl=300)
+def get_fx_rate():
+    try:
+        rate = yf.Ticker("EURUSD=X").history(period="1d")["Close"].iloc[-1]
+        return rate
+    except:
+        return 1.0
+
+eur_usd_rate = get_fx_rate()
 
 # Fetch current prices and KPIs
 @st.cache_data(ttl=300)
@@ -51,13 +67,18 @@ def fetch_data(ticker):
 kpis = portfolio["Ticker"].apply(fetch_data)
 portfolio = pd.concat([portfolio, kpis], axis=1)
 
-# Financial calculations
+# Umrechnung bei EUR -> USD -> CHF
+portfolio["Current Price"] = portfolio.apply(
+    lambda row: row["Current Price"] * eur_usd_rate if row["Currency"] == "EUR" else row["Current Price"],
+    axis=1
+)
+
 portfolio["Value"] = portfolio["Units"] * portfolio["Current Price"]
 portfolio["Cost Basis"] = portfolio["Units"] * portfolio["Buy Price"]
 portfolio["Profit/Loss (CHF)"] = portfolio["Value"] - portfolio["Cost Basis"]
 portfolio["Profit/Loss (%)"] = ((portfolio["Current Price"] - portfolio["Buy Price"]) / portfolio["Buy Price"]) * 100
 
-# Recommendation logic
+# Empfehlungen
 STOP_LOSS = -15
 TAKE_PROFIT = 25
 
@@ -77,71 +98,46 @@ def recommendation(row):
 
 portfolio["Recommendation"] = portfolio.apply(recommendation, axis=1)
 
-# Style recommendation column
-def highlight_recommendation(val):
-    if "BUY" in str(val):
-        return "background-color: #d1f7c4"
-    elif "SELL" in str(val):
-        return "background-color: #f8d7da"
-    elif "Review" in str(val) or "Risky" in str(val):
-        return "background-color: #fff3cd"
-    else:
-        return ""
+# Formatierungen
+portfolio = portfolio.round(2)
 
-# Round numerical columns
-numeric_cols = ["Buy Price", "Current Price", "Value", "Cost Basis", "Profit/Loss (CHF)",
-                "Profit/Loss (%)", "EPS", "PE Ratio", "PEG Ratio", "Beta", "Free Cash Flow", "Revenue Growth YoY (%)"]
-portfolio[numeric_cols] = portfolio[numeric_cols].round(2)
-
-# 💰 Add cash and updated summary
-cash = 162.07  # CHF at Saxo
-total_cost = portfolio["Cost Basis"].sum()
+# Portfolio-Werte
 total_value = portfolio["Value"].sum() + cash
-total_pl = total_value - total_cost
-total_pl_pct = (total_pl / total_cost) * 100
+portfolio_growth = ((total_value - total_deposit) / total_deposit) * 100
 
+# 💰 Portfolio Summary Anzeige
 st.markdown("### 💰 Portfolio Summary")
 col1, col2, col3, col4 = st.columns(4)
-col1.metric(label="Total Invested", value=f"{total_cost:.2f} CHF")
-col2.metric(label="Current Value", value=f"{total_value:.2f} CHF")
+col1.metric(label="Total Deposit", value=f"{total_deposit:.2f} CHF")
+col1.caption(f"- Invested: {invested:.2f} CHF\n- Cash: {cash:.2f} CHF")
+col2.metric(label="Total Value Portfolio", value=f"{total_value:.2f} CHF")
 col3.metric(label="Cash (Saxo)", value=f"{cash:.2f} CHF")
-col4.metric(label="Total P/L", value=f"{total_pl:.2f} CHF ({total_pl_pct:.2f}%)")
+col4.metric(label="Growth vs Deposit", value=f"{portfolio_growth:.2f} %")
 
-# 📋 Table display
-styled_df = portfolio[[ 
+# Tabelle
+styled_df = portfolio[[
     "Type", "Name", "Ticker", "Units", "Buy Price", "Current Price", "Value",
     "Profit/Loss (CHF)", "Profit/Loss (%)", "EPS", "PE Ratio", "PEG Ratio", "Beta",
     "Free Cash Flow", "Revenue Growth YoY (%)", "Target Horizon", "Recommendation"
-]].style.applymap(highlight_recommendation, subset=["Recommendation"])
+]].style.applymap(lambda val: "background-color: #d1f7c4" if "BUY" in str(val)
+                  else "background-color: #f8d7da" if "SELL" in str(val)
+                  else "background-color: #fff3cd" if "Review" in str(val) or "Risky" in str(val)
+                  else "", subset=["Recommendation"])
+
 st.dataframe(styled_df, use_container_width=True)
 
-# 📈 Historical chart
+# 📈 Kursentwicklung
 st.markdown("---")
 st.markdown("### 📈 Kursentwicklung anzeigen")
-
 selected_ticker = st.selectbox("Wähle eine Position aus dem Portfolio:", portfolio["Ticker"].unique())
 
 @st.cache_data(ttl=3600)
 def get_history(ticker):
-    stock = yf.Ticker(ticker)
-    return stock.history(period="5y", interval="1d")
+    return yf.Ticker(ticker).history(period="5y", interval="1d")
 
 hist = get_history(selected_ticker)
-
 fig = go.Figure()
-fig.add_trace(go.Scatter(
-    x=hist.index,
-    y=hist["Close"],
-    mode="lines",
-    name="Kurs",
-    line=dict(color="royalblue")
-))
-
-fig.update_layout(
-    title=f"Kursentwicklung von {selected_ticker} (5 Jahre, täglich)",
-    xaxis_title="Datum",
-    yaxis_title="Kurs (in lokaler Währung)",
-    height=500
-)
-
+fig.add_trace(go.Scatter(x=hist.index, y=hist["Close"], mode="lines", name="Kurs", line=dict(color="royalblue")))
+fig.update_layout(title=f"Kursentwicklung von {selected_ticker} (5 Jahre, täglich)",
+                  xaxis_title="Datum", yaxis_title="Kurs (lokal)", height=500)
 st.plotly_chart(fig, use_container_width=True)
