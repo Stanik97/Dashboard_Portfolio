@@ -3,22 +3,25 @@ import pandas as pd
 import yfinance as yf
 import plotly.graph_objs as go
 
-# -----------------------------
-# 📄 Konfiguration
-# -----------------------------
+# --- Konfiguration der Seite ---
 st.set_page_config(page_title="Portfolio Dashboard", layout="wide")
-st.title("📊 Live Portfolio Dashboard")
+st.title("\U0001F4C8 Live Portfolio Dashboard")
 
-# -----------------------------
-# 💰 Manuelle Eingaben
-# -----------------------------
+# --- Manuelle Werte ---
 cash = 162.07
 total_deposit = 500.00
 total_invested = total_deposit - cash
 
-# -----------------------------
-# 💶 Aktuellen EUR/USD-Kurs abrufen
-# -----------------------------
+# --- Portfolio definieren ---
+data = [
+    ["Stock", "Palantir Technologies", "PLTR", "EUR", 2, 79.72, "1-2 years"],
+    ["ETF", "iShares Automation & Robotics", "RBOT.SW", "USD", 10, 12.26, "3-5 years"],
+    ["ETF", "iShares Core MSCI World", "IWRD.SW", "USD", 1, 101.30, "3-5 years"]
+]
+columns = ["Type", "Name", "Ticker", "Currency", "Units", "Buy Price", "Target Horizon"]
+portfolio = pd.DataFrame(data, columns=columns)
+
+# --- Wechselkurs EUR zu USD (für PLTR) ---
 @st.cache_data(ttl=300)
 def get_fx_rate():
     try:
@@ -26,30 +29,15 @@ def get_fx_rate():
     except:
         return 1.0
 
-eur_usd = get_fx_rate()
+fx_eur_usd = get_fx_rate()
 
-# -----------------------------
-# 📊 Portfolio-Definition
-# -----------------------------
-portfolio = pd.DataFrame({
-    "Type": ["Stock", "ETF", "ETF"],
-    "Name": ["Palantir Technologies", "iShares Automation & Robotics", "iShares Core MSCI World"],
-    "Ticker": ["PLTR", "RBOT.SW", "IWRD.SW"],
-    "Currency": ["EUR", "USD", "USD"],
-    "Units": [2, 10, 1],
-    "Buy Price": [79.72, 12.26, 101.30],
-    "Target Horizon": ["1-2 years", "3-5 years", "3-5 years"]
-})
-
-# -----------------------------
-# 🔎 Marktdaten abrufen
-# -----------------------------
+# --- Daten abrufen ---
 @st.cache_data(ttl=300)
 def fetch_data(ticker):
     try:
         stock = yf.Ticker(ticker)
-        price = stock.history(period="1d")["Close"].iloc[-1]
         info = stock.info
+        price = stock.history(period="1d")["Close"].iloc[-1]
         return pd.Series({
             "Raw Price": price,
             "EPS": info.get("trailingEps"),
@@ -58,7 +46,7 @@ def fetch_data(ticker):
             "PEG Ratio": info.get("pegRatio"),
             "Beta": info.get("beta"),
             "Free Cash Flow": info.get("freeCashflow"),
-            "Revenue Growth YoY (%)": info.get("revenueGrowth") * 100 if info.get("revenueGrowth") else None
+            "Revenue Growth YoY (%)": info.get("revenueGrowth", 0) * 100 if info.get("revenueGrowth") else None
         })
     except:
         return pd.Series({
@@ -75,33 +63,23 @@ def fetch_data(ticker):
 kpis = portfolio["Ticker"].apply(fetch_data)
 portfolio = pd.concat([portfolio, kpis], axis=1)
 
-# -----------------------------
-# 💱 Währungsumrechnung durchführen
-# -----------------------------
+# --- Preis anpassen (PLTR ist in USD, Anzeige aber in EUR) ---
 def convert_price(row):
-    if pd.isna(row["Raw Price"]):
-        return None
     if row["Currency"] == "EUR":
-        return row["Raw Price"] / eur_usd
+        return row["Raw Price"] * fx_eur_usd
     return row["Raw Price"]
 
 portfolio["Current Price"] = portfolio.apply(convert_price, axis=1)
-
-# -----------------------------
-# 📈 Berechnungen
-# -----------------------------
 portfolio["Value"] = portfolio["Units"] * portfolio["Current Price"]
 portfolio["Cost Basis"] = portfolio["Units"] * portfolio["Buy Price"]
 portfolio["Profit/Loss"] = portfolio["Value"] - portfolio["Cost Basis"]
 portfolio["Profit/Loss (%)"] = ((portfolio["Current Price"] - portfolio["Buy Price"]) / portfolio["Buy Price"]) * 100
 
-# -----------------------------
-# 🧠 Empfehlung
-# -----------------------------
+# --- Empfehlung ---
 STOP_LOSS = -15
 TAKE_PROFIT = 25
 
-def recommendation(row):
+def recommend(row):
     if row["Profit/Loss (%)"] <= STOP_LOSS:
         return "❌ SELL (Stop-Loss)"
     elif row["Profit/Loss (%)"] >= TAKE_PROFIT:
@@ -115,49 +93,43 @@ def recommendation(row):
     else:
         return "HOLD"
 
-portfolio["Recommendation"] = portfolio.apply(recommendation, axis=1)
+portfolio["Recommendation"] = portfolio.apply(recommend, axis=1)
 
-# -----------------------------
-# 🎨 Formatierung & Rundung
-# -----------------------------
-round_cols = [
-    "Buy Price", "Current Price", "Value", "Cost Basis", "Profit/Loss", "Profit/Loss (%)",
-    "EPS", "PE Ratio", "PEG Ratio", "Beta", "Free Cash Flow", "Revenue Growth YoY (%)"
-]
+# --- Runden ---
+round_cols = ["Buy Price", "Current Price", "Value", "Cost Basis", "Profit/Loss", "Profit/Loss (%)",
+              "EPS", "PE Ratio", "PEG Ratio", "Beta", "Free Cash Flow", "Revenue Growth YoY (%)"]
 portfolio[round_cols] = portfolio[round_cols].round(3)
 
-# -----------------------------
-# 📊 Portfolio Summary
-# -----------------------------
+# --- Portfolio Summary ---
 total_value = portfolio["Value"].sum() + cash
 growth_pct = ((total_value - total_deposit) / total_deposit) * 100
 
 st.markdown("### 💰 Portfolio Summary")
-sum_col1, sum_col2, sum_col3 = st.columns([1.2, 1.2, 1.2])
-with sum_col1:
-    st.metric(label="Total Deposit", value=f"{total_deposit:.3f} CHF")
-    st.markdown(f"<div style='font-size: 0.9em; margin-top: -10px;'>• Invested: {total_invested:.3f} CHF<br>• Cash: {cash:.2f} CHF</div>", unsafe_allow_html=True)
-with sum_col2:
-    st.metric(label="Total Value Portfolio", value=f"{total_value:.3f} CHF")
-with sum_col3:
-    st.metric(label="Value Development", value=f"{growth_pct:.2f} %")
+col1, col2, col3 = st.columns([2, 2, 2])
+with col1:
+    st.metric("Total Deposit", f"{total_deposit:.3f} CHF")
+    st.markdown(f"- Invested: {total_invested:.2f} CHF  \n- Cash: {cash:.2f} CHF")
+with col2:
+    st.metric("Total Value Portfolio", f"{total_value:.3f} CHF")
+with col3:
+    st.metric("Value Development", f"{growth_pct:.2f} %")
 
-# -----------------------------
-# 📌 Current Positions
-# -----------------------------
-st.markdown("### 📌 Current Positions")
+# --- Aktien anzeigen ---
+st.markdown("### 🖌️ Current Positions – Stocks")
+stocks = portfolio[portfolio["Type"] == "Stock"]
+st.dataframe(stocks[["Name", "Ticker", "Currency", "Units", "Buy Price", "Current Price", "Value",
+                    "Profit/Loss", "Profit/Loss (%)", "EPS", "PE Ratio", "PEG Ratio", "Beta",
+                    "Free Cash Flow", "Revenue Growth YoY (%)", "Target Horizon", "Recommendation"]],
+             use_container_width=True)
 
-styled_df = portfolio[[
-    "Type", "Name", "Ticker", "Currency", "Units", "Buy Price", "Current Price", "Value",
-    "Profit/Loss", "Profit/Loss (%)", "EPS", "PE Ratio", "PEG Ratio", "Beta",
-    "Free Cash Flow", "Revenue Growth YoY (%)", "Target Horizon", "Recommendation"
-]].style.format(precision=3)
+# --- ETFs anzeigen ---
+st.markdown("### 🌿 Current Positions – ETFs")
+etfs = portfolio[portfolio["Type"] == "ETF"]
+st.dataframe(etfs[["Name", "Ticker", "Currency", "Units", "Buy Price", "Current Price", "Value",
+                   "Profit/Loss", "Profit/Loss (%)", "PE Ratio", "Beta", "Target Horizon", "Recommendation"]],
+             use_container_width=True)
 
-st.dataframe(styled_df, use_container_width=True)
-
-# -----------------------------
-# 👀 Watchlist
-# -----------------------------
+# --- Watchlist ---
 st.markdown("### 👀 Watchlist")
 watchlist = pd.DataFrame({
     "Name": ["Nvidia Corp", "ASML Holding", "Tesla Inc"],
@@ -167,24 +139,19 @@ watchlist = pd.DataFrame({
 })
 st.dataframe(watchlist, use_container_width=True)
 
-# -----------------------------
-# 📈 Kursentwicklung
-# -----------------------------
-st.markdown("---")
-st.markdown("### 📈 Kursentwicklung anzeigen")
-
-all_tickers = list(portfolio["Ticker"]) + list(watchlist["Ticker"])
-selected_ticker = st.selectbox("Wähle eine Position aus dem Portfolio oder der Watchlist:", all_tickers)
+# --- Kursentwicklung ---
+st.markdown("### 📊 Kursentwicklung anzeigen")
+ticker_options = pd.concat([portfolio["Ticker"], watchlist["Ticker"]]).unique()
+selected_ticker = st.selectbox("Wähle eine Position aus:", ticker_options)
 
 @st.cache_data(ttl=3600)
 def get_history(ticker):
-    return yf.Ticker(ticker).history(period="5y", interval="1d")
+    stock = yf.Ticker(ticker)
+    return stock.history(period="5y", interval="1d")
 
 hist = get_history(selected_ticker)
 fig = go.Figure()
 fig.add_trace(go.Scatter(x=hist.index, y=hist["Close"], mode="lines", name="Kurs", line=dict(color="royalblue")))
-fig.update_layout(
-    title=f"Kursentwicklung von {selected_ticker} (5 Jahre, täglich)",
-    xaxis_title="Datum", yaxis_title="Kurs (lokale Währung)", height=500
-)
+fig.update_layout(title=f"Kursentwicklung von {selected_ticker} (5 Jahre, täglich)",
+                  xaxis_title="Datum", yaxis_title="Kurs (lokale Währung)", height=500)
 st.plotly_chart(fig, use_container_width=True)
