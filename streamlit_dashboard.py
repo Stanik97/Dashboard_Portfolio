@@ -5,17 +5,16 @@ import plotly.graph_objects as go
 
 # Page config
 st.set_page_config(page_title="Portfolio Dashboard", layout="wide")
-st.title("📊 Live Portfolio Dashboard (PLTR in USD – held in EUR)")
+st.title("📊 Live Portfolio Dashboard")
 
 # --- Input Data ---
 portfolio = pd.DataFrame({
     "Type": ["Stock", "ETF", "ETF"],
     "Name": ["Palantir Technologies", "iShares Automation & Robotics", "iShares Core MSCI World"],
     "Ticker": ["PLTR", "RBOT.SW", "IWRD.SW"],
-    "Currency": ["USD", "USD", "USD"],  # Alles auf USD – auch PLTR
-    "Held In": ["EUR", "USD", "USD"],  # Nur Info
+    "Currency": ["USD", "USD", "USD"],
     "Units": [2, 10, 1],
-    "Buy Price": [79.72, 12.26, 101.30],  # in USD
+    "Buy Price": [88.50, 12.26, 101.30],  # bereits in USD
     "Target Horizon": ["1-2 years", "3-5 years", "3-5 years"]
 })
 
@@ -54,10 +53,9 @@ def fetch_kpis(ticker):
 kpis = portfolio["Ticker"].apply(fetch_kpis)
 portfolio = pd.concat([portfolio, kpis], axis=1)
 
-# --- Preis und CHF-Berechnung ---
+# --- Preis & Kennzahlen ---
 portfolio["Current Price"] = portfolio["Raw Price"]
 portfolio["Value (CHF)"] = portfolio["Current Price"] * portfolio["Units"] * usd_chf
-portfolio["Cost Basis"] = portfolio["Buy Price"] * portfolio["Units"]
 portfolio["Profit/Loss"] = (portfolio["Current Price"] - portfolio["Buy Price"]) * portfolio["Units"]
 portfolio["Profit/Loss (%)"] = ((portfolio["Current Price"] - portfolio["Buy Price"]) / portfolio["Buy Price"]) * 100
 
@@ -97,21 +95,20 @@ with col2:
 with col4:
     st.metric("Value Development", f"{growth_pct:.2f} %")
 
-# --- Hinweis bei PLTR
-if "PLTR" in portfolio["Ticker"].values:
-    st.info("📌 Hinweis: Die Position Palantir wird in USD abgebildet, obwohl sie bei Saxo in EUR gehalten wird. Die CHF-Bewertung ist dennoch korrekt.")
-
 # --- Positionen aufteilen ---
 stocks_df = portfolio[portfolio["Type"] == "Stock"]
 etfs_df = portfolio[portfolio["Type"] == "ETF"]
 
+# Spaltenanordnung ohne "Cost Basis"
+cols_order = ["Type", "Name", "Ticker", "Currency", "Units", "Buy Price", "Current Price", "Value (CHF)",
+              "Profit/Loss", "Profit/Loss (%)", "EPS", "PE Ratio", "Market Cap", "PEG Ratio", "Beta",
+              "Free Cash Flow", "Revenue Growth YoY (%)", "Target Horizon", "Recommendation"]
+
 st.markdown("### 📌 Current Positions – Stocks")
-st.dataframe(stocks_df[[col for col in portfolio.columns if col != "Raw Price"]], use_container_width=True)
+st.dataframe(stocks_df[cols_order], use_container_width=True)
 
 st.markdown("### 📌 Current Positions – ETFs")
-etf_cols = ["Type", "Name", "Ticker", "Currency", "Units", "Buy Price", "Current Price", "Value (CHF)",
-            "Profit/Loss", "Profit/Loss (%)", "PE Ratio", "Target Horizon", "Recommendation"]
-st.dataframe(etfs_df[etf_cols], use_container_width=True)
+st.dataframe(etfs_df[cols_order], use_container_width=True)
 
 # --- Watchlist
 watchlist = pd.DataFrame({
