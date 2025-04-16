@@ -9,13 +9,13 @@ st.title("📊 Live Portfolio Dashboard")
 
 # --- Input Data ---
 portfolio = pd.DataFrame({
-    "Type": ["Stock", "ETF", "ETF"],
-    "Name": ["Palantir Technologies", "iShares Automation & Robotics", "iShares Core MSCI World"],
-    "Ticker": ["PLTR", "RBOT.SW", "IWRD.SW"],
-    "Currency": ["USD", "USD", "USD"],
-    "Units": [2, 10, 1],
-    "Buy Price": [88.50, 12.26, 101.30],  # bereits in USD
-    "Target Horizon": ["1-2 years", "3-5 years", "3-5 years"]
+    "Type": ["Stock", "ETF", "ETF", "Stock"],
+    "Name": ["Palantir Technologies", "iShares Automation & Robotics", "iShares Core MSCI World", "Georg Fischer AG"],
+    "Ticker": ["PLTR", "RBOT.SW", "IWRD.SW", "FI-N.SW"],
+    "Currency": ["USD", "USD", "USD", "CHF"],
+    "Units": [2, 10, 1, round(200 / 59.65, 3)],
+    "Buy Price": [88.50, 12.26, 101.30, 59.65],
+    "Target Horizon": ["1-2 years", "3-5 years", "3-5 years", "3-5 years"]
 })
 
 cash = 162.07
@@ -55,7 +55,15 @@ portfolio = pd.concat([portfolio, kpis], axis=1)
 
 # --- Preis & Kennzahlen ---
 portfolio["Current Price"] = portfolio["Raw Price"]
-portfolio["Value (CHF)"] = portfolio["Current Price"] * portfolio["Units"] * usd_chf
+
+def convert_to_chf(row):
+    if row["Currency"] == "USD":
+        return row["Current Price"] * usd_chf
+    elif row["Currency"] == "CHF":
+        return row["Current Price"]
+    return None
+
+portfolio["Value (CHF)"] = portfolio.apply(lambda row: convert_to_chf(row) * row["Units"], axis=1)
 portfolio["Profit/Loss"] = (portfolio["Current Price"] - portfolio["Buy Price"]) * portfolio["Units"]
 portfolio["Profit/Loss (%)"] = ((portfolio["Current Price"] - portfolio["Buy Price"]) / portfolio["Buy Price"]) * 100
 
@@ -99,7 +107,7 @@ with col4:
 stocks_df = portfolio[portfolio["Type"] == "Stock"]
 etfs_df = portfolio[portfolio["Type"] == "ETF"]
 
-# Spaltenanordnung ohne "Cost Basis"
+# Spaltenanordnung
 cols_order = ["Type", "Name", "Ticker", "Currency", "Units", "Buy Price", "Current Price", "Value (CHF)",
               "Profit/Loss", "Profit/Loss (%)", "EPS", "PE Ratio", "Market Cap", "PEG Ratio", "Beta",
               "Free Cash Flow", "Revenue Growth YoY (%)", "Target Horizon", "Recommendation"]
