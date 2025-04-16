@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
+import plotly.graph_objects as go
 
 # Page config
 st.set_page_config(page_title="Portfolio Dashboard", layout="wide")
@@ -26,9 +27,10 @@ total_invested = total_deposit - cash
 def get_fx_rates():
     eur_chf = yf.Ticker("EURCHF=X").history(period="1d")["Close"].iloc[-1]
     usd_chf = yf.Ticker("USDCHF=X").history(period="1d")["Close"].iloc[-1]
-    return eur_chf, usd_chf
+    usd_eur = yf.Ticker("USDEUR=X").history(period="1d")["Close"].iloc[-1]
+    return eur_chf, usd_chf, usd_eur
 
-eur_chf, usd_chf = get_fx_rates()
+eur_chf, usd_chf, usd_eur = get_fx_rates()
 
 def convert_to_chf(row, price):
     if row["Currency"] == "USD":
@@ -70,15 +72,15 @@ kpis = portfolio["Ticker"].apply(fetch_kpis)
 portfolio = pd.concat([portfolio, kpis], axis=1)
 
 # Währungslogik anwenden
-portfolio["Current Price"] = portfolio.apply(lambda row: row["Raw Price"] * eur_chf if row["Currency"] == "EUR"
-                                              else row["Raw Price"] * usd_chf if row["Currency"] == "USD"
-                                              else row["Raw Price"], axis=1)
+portfolio["Current Price"] = portfolio.apply(
+    lambda row: row["Raw Price"] / usd_eur if row["Currency"] == "EUR" and row["Ticker"] == "PLTR"
+    else row["Raw Price"], axis=1
+)
 
-portfolio["Current Price"] = portfolio["Raw Price"]  # Nur in Originalwährung anzeigen
-portfolio["Value (CHF)"] = portfolio.apply(lambda row: convert_to_chf(row, row["Raw Price"]) * row["Units"], axis=1)
+portfolio["Value (CHF)"] = portfolio.apply(lambda row: convert_to_chf(row, row["Current Price"]) * row["Units"], axis=1)
 portfolio["Cost Basis"] = portfolio["Buy Price"] * portfolio["Units"]
-portfolio["Profit/Loss"] = (portfolio["Raw Price"] - portfolio["Buy Price"]) * portfolio["Units"]
-portfolio["Profit/Loss (%)"] = ((portfolio["Raw Price"] - portfolio["Buy Price"]) / portfolio["Buy Price"]) * 100
+portfolio["Profit/Loss"] = (portfolio["Current Price"] - portfolio["Buy Price"]) * portfolio["Units"]
+portfolio["Profit/Loss (%)"] = ((portfolio["Current Price"] - portfolio["Buy Price"]) / portfolio["Buy Price"]) * 100
 
 # --- Empfehlungen ---
 def recommendation(row):
@@ -91,7 +93,7 @@ def recommendation(row):
     elif row["Beta"] and row["Beta"] > 2:
         return "⚠️ Risky – High Volatility"
     elif row["EPS"] and row["EPS"] > 0 and row["Revenue Growth YoY (%)"] and row["Revenue Growth YoY (%)"] > 10:
-        return "🟢 BUY (Growth)"
+        return "\U0001f7e2 BUY (Growth)"
     else:
         return "HOLD"
 
@@ -164,7 +166,6 @@ def get_history(ticker):
     return stock.history(period="5y", interval="1d")
 
 hist = get_history(selected_ticker)
-import plotly.graph_objects as go
 fig = go.Figure()
 fig.add_trace(go.Scatter(x=hist.index, y=hist["Close"], mode="lines", name="Kurs", line=dict(color="royalblue")))
 fig.update_layout(title=f"Kursentwicklung von {selected_ticker} (5 Jahre, täglich)", xaxis_title="Datum", yaxis_title="Kurs", height=500)
