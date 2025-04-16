@@ -27,52 +27,58 @@ total_invested = total_deposit - cash
 def get_fx_rates():
     eur_chf = yf.Ticker("EURCHF=X").history(period="1d")["Close"].iloc[-1]
     usd_chf = yf.Ticker("USDCHF=X").history(period="1d")["Close"].iloc[-1]
-    return eur_chf, usd_chf
+    usd_eur = yf.Ticker("USDEUR=X").history(period="1d")["Close"].iloc[-1]
+    return eur_chf, usd_chf, usd_eur
 
-eur_chf, usd_chf = get_fx_rates()
+eur_chf, usd_chf, usd_eur = get_fx_rates()
 
-# --- Data Fetch ---
+# --- Data Fetch mit Fallback ---
 @st.cache_data(ttl=300)
-def fetch_kpis(ticker):
+def fetch_kpis(ticker, currency):
     try:
         stock = yf.Ticker(ticker)
-        info = stock.info
-        price = stock.history(period="1d")["Close"].iloc[-1]
+        hist = stock.history(period="1d")
+        if hist.empty and ticker == "PLTR.DE":
+            fallback = yf.Ticker("PLTR")
+            fallback_hist = fallback.history(period="1d")
+            if fallback_hist.empty:
+                return pd.Series({col: None for col in ["Raw Price", "EPS", "PE Ratio", "Market Cap", "PEG Ratio", "Beta", "Free Cash Flow", "Revenue Growth YoY (%)"]})
+            fallback_price = fallback_hist["Close"].iloc[-1] * usd_eur
+            return pd.Series({
+                "Raw Price": fallback_price,
+                "EPS": fallback.info.get("trailingEps"),
+                "PE Ratio": fallback.info.get("trailingPE"),
+                "Market Cap": fallback.info.get("marketCap"),
+                "PEG Ratio": fallback.info.get("pegRatio"),
+                "Beta": fallback.info.get("beta"),
+                "Free Cash Flow": fallback.info.get("freeCashflow"),
+                "Revenue Growth YoY (%)": fallback.info.get("revenueGrowth") * 100 if fallback.info.get("revenueGrowth") else None
+            })
+        elif hist.empty:
+            return pd.Series({col: None for col in ["Raw Price", "EPS", "PE Ratio", "Market Cap", "PEG Ratio", "Beta", "Free Cash Flow", "Revenue Growth YoY (%)"]})
+        
+        price = hist["Close"].iloc[-1]
         return pd.Series({
             "Raw Price": price,
-            "EPS": info.get("trailingEps"),
-            "PE Ratio": info.get("trailingPE"),
-            "Market Cap": info.get("marketCap"),
-            "PEG Ratio": info.get("pegRatio"),
-            "Beta": info.get("beta"),
-            "Free Cash Flow": info.get("freeCashflow"),
-            "Revenue Growth YoY (%)": info.get("revenueGrowth") * 100 if info.get("revenueGrowth") else None
+            "EPS": stock.info.get("trailingEps"),
+            "PE Ratio": stock.info.get("trailingPE"),
+            "Market Cap": stock.info.get("marketCap"),
+            "PEG Ratio": stock.info.get("pegRatio"),
+            "Beta": stock.info.get("beta"),
+            "Free Cash Flow": stock.info.get("freeCashflow"),
+            "Revenue Growth YoY (%)": stock.info.get("revenueGrowth") * 100 if stock.info.get("revenueGrowth") else None
         })
     except:
-        return pd.Series({
-            "Raw Price": None,
-            "EPS": None,
-            "PE Ratio": None,
-            "Market Cap": None,
-            "PEG Ratio": None,
-            "Beta": None,
-            "Free Cash Flow": None,
-            "Revenue Growth YoY (%)": None
-        })
+        return pd.Series({col: None for col in ["Raw Price", "EPS", "PE Ratio", "Market Cap", "PEG Ratio", "Beta", "Free Cash Flow", "Revenue Growth YoY (%)"]})
 
-kpis = portfolio["Ticker"].apply(fetch_kpis)
+# --- KPI Fetch für alle Positionen ---
+kpis = portfolio.apply(lambda row: fetch_kpis(row["Ticker"], row["Currency"]), axis=1)
 portfolio = pd.concat([portfolio, kpis], axis=1)
 
-# --- Preis in Zielwährung umrechnen ---
-def convert_price(row):
-    if row["Currency"] == "USD":
-        return row["Raw Price"]
-    else:
-        return row["Raw Price"]  # z. B. EUR, PLTR.DE → bereits in EUR
+# --- Preis in Zielwährung ---
+portfolio["Current Price"] = portfolio["Raw Price"]
 
-portfolio["Current Price"] = portfolio.apply(convert_price, axis=1)
-
-# --- CHF-Umrechnung für Value (nur für Darstellung) ---
+# --- CHF-Umrechnung für Value (nur Darstellung) ---
 def convert_to_chf(row, price):
     if row["Currency"] == "USD":
         return price * usd_chf
